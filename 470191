@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>TAWSILA | توصيلة</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --primary-color: #007BFF;
+  --secondary-color: #28A745;
+  --background: #f0f4f8;
+  --delivery-color: #dff9d8;
+  --buy-color: #d8ecf9;
+}
+body {
+  font-family: 'Poppins', 'Roboto', sans-serif;
+  background: var(--background);
+  margin: 0;
+  padding: 0;
+  direction: rtl;
+  text-align: center;
+}
+h1 { color: var(--primary-color); margin-top: 20px; }
+.box { background: #fff; padding: 20px; margin: 20px auto; border-radius: 15px; max-width: 500px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+input, textarea, select, button { width: 95%; margin: 10px auto; padding: 12px; font-size: 16px; border-radius: 8px; border: 1px solid #ccc; display: block; font-family: 'Roboto', sans-serif; }
+textarea { resize: vertical; min-height: 60px; }
+button { background: var(--secondary-color); color: white; border: none; cursor: pointer; transition: 0.3s; font-weight: 600; }
+button:hover { background: var(--primary-color); }
+button.delete-btn, button.edit-btn { padding: 5px 10px; margin-left: 10px; border-radius: 5px; }
+button.delete-btn { background: #e74c3c; }
+button.edit-btn { background: #f1c40f; }
+#result { margin-top: 15px; font-weight: bold; color: #2c3e50; white-space: pre-line; }
+#history { margin-top: 20px; background: #fff; padding: 15px; border-radius: 12px; max-width: 500px; margin-left: auto; margin-right: auto; text-align: right; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+.history-item { border-bottom: 1px solid #ddd; padding: 10px 5px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; border-radius: 8px; margin-bottom: 5px; }
+.history-item span { flex: 1; }
+#summary { margin-top: 15px; font-weight: bold; color: #34495e; }
+.icon { margin-right: 10px; font-size: 18px; }
+#map { height: 300px; width: 95%; margin: 20px auto; border-radius: 12px; }
+#adminPanel { background: #fff; max-width: 600px; margin: 20px auto; padding: 15px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); text-align: right; }
+</style>
+</head>
+<body>
+
+<h1>🚚 TAWSILA | توصيلة</h1>
+<p>مرحباً بك في النسخة الاحترافية التجريبية</p>
+
+<div class="box">
+  <label>نوع الطلب:</label>
+  <select id="orderType">
+    <option value="delivery">توصيل فقط</option>
+    <option value="buy">شراء + توصيل</option>
+  </select>
+
+  <input type="text" id="from" placeholder="من وين؟ (المكان)">
+  <input type="text" id="to" placeholder="إلى وين؟ (المكان)">
+  <textarea id="details" placeholder="تفاصيل الطلب"></textarea>
+
+  <button id="sendBtn">إرسال الطلب</button>
+</div>
+
+<div id="map"></div>
+
+<p id="result"></p>
+
+<div id="history">
+  <h3>سجل الطلبات:</h3>
+</div>
+
+<p id="summary">إجمالي الطلبات: 0 | توصيل فقط: 0 | شراء+توصيل: 0</p>
+
+<div id="adminPanel">
+  <h3>واجهة الإدارة</h3>
+  <div id="adminOrders"></div>
+</div>
+
+<script type="module">
+  // Firebase modular SDK
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+  import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAzH72AKY4R2gpO1ZIRPDNURx1fFjjtH0Q",
+    authDomain: "tawsela-75f42.firebaseapp.com",
+    projectId: "tawsela-75f42",
+    storageBucket: "tawsela-75f42.firebasestorage.app",
+    messagingSenderId: "786037598592",
+    appId: "1:786037598592:web:5dd24d3e8421be003d7965"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  let map, fromMarker, toMarker;
+
+  window.initMap = function() {
+    const savedCenter = JSON.parse(localStorage.getItem('mapCenter'));
+    const center = savedCenter || { lat: 15.5007, lng: 32.5599 };
+    map = new google.maps.Map(document.getElementById("map"), { center, zoom: 12 });
+
+    const savedFrom = JSON.parse(localStorage.getItem('fromMarker'));
+    const savedTo = JSON.parse(localStorage.getItem('toMarker'));
+
+    if (savedFrom) fromMarker = new google.maps.Marker({ position: savedFrom, map, label: "من" });
+    if (savedTo) toMarker = new google.maps.Marker({ position: savedTo, map, label: "إلى" });
+
+    map.addListener('center_changed', () => {
+      const c = map.getCenter();
+      localStorage.setItem('mapCenter', JSON.stringify({ lat: c.lat(), lng: c.lng() }));
+    });
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    const btn = document.getElementById("sendBtn");
+    const historyDiv = document.getElementById("history");
+    const adminDiv = document.getElementById("adminOrders");
+    const summary = document.getElementById("summary");
+
+    function updateCounters(orders) {
+      const total = orders.length;
+      const deliveryOnly = orders.filter(o => o.type === "delivery").length;
+      const buyAndDeliver = orders.filter(o => o.type === "buy").length;
+      summary.innerText = `إجمالي الطلبات: ${total} | توصيل فقط: ${deliveryOnly} | شراء+توصيل: ${buyAndDeliver}`;
+    }
+
+    function renderOrders(orders) {
+      historyDiv.innerHTML = "<h3>سجل الطلبات:</h3>";
+      adminDiv.innerHTML = "";
+      orders.forEach((order) => {
+        // واجهة العميل
+        const itemDiv = document.createElement("div");
+        itemDiv.className = "history-item";
+        itemDiv.style.backgroundColor = order.type === "delivery" ? "var(--delivery-color)" : "var(--buy-color)";
+        const icon = order.type === "delivery" ? "📦" : "🛒";
+        const infoSpan = document.createElement("span");
+        infoSpan.innerHTML = `<span class='icon'>${icon}</span>[${order.time}] نوع الطلب: ${order.type === "delivery" ? "توصيل فقط" : "شراء + توصيل"} | من: ${order.from} | إلى: ${order.to} | التفاصيل: ${order.details}`;
+        itemDiv.appendChild(infoSpan);
+        historyDiv.appendChild(itemDiv);
+
+        // واجهة الإدارة
+        const adminItem = document.createElement("div");
+        adminItem.className = "history-item";
+        adminItem.style.backgroundColor = order.type === "delivery" ? "var(--delivery-color)" : "var(--buy-color)";
+        const adminInfo = document.createElement("span");
+        adminInfo.innerHTML = `[${order.time}] ${order.type === "delivery" ? "توصيل فقط" : "شراء + توصيل"} | من: ${order.from} | إلى: ${order.to} | التفاصيل: ${order.details}`;
+        const delBtn = document.createElement("button");
+        delBtn.className = "delete-btn";
+        delBtn.innerText = "حذف";
+        delBtn.addEventListener("click", () => { deleteDoc(doc(db, "orders", order.id)); });
+        adminItem.appendChild(adminInfo);
+        adminItem.appendChild(delBtn);
+        adminDiv.appendChild(adminItem);
+      });
+    }
+
+    // قراءة الطلبات مباشرة من Firestore
+    onSnapshot(collection(db, "orders"), (snapshot) => {
+      const orders = snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+      renderOrders(orders);
+      updateCounters(orders);
+    });
+
+    btn.addEventListener("click", async function () {
+      const orderType = document.getElementById("orderType").value;
+      const from = document.getElementById("from").value.trim();
+      const to = document.getElementById("to").value.trim();
+      const details = document.getElementById("details").value.trim();
+
+      if (!from || !to || !details) {
+        alert("من فضلك عبّي كل الحقول");
+        return;
+      }
+
+      const now = new Date();
+      const time = now.toLocaleString();
+
+      await addDoc(collection(db, "orders"), { type: orderType, from, to, details, time });
+
+      document.getElementById("result").innerText = `✅ تم إرسال طلبك بنجاح!\n[${time}]\nنوع الطلب: ${orderType === "delivery" ? "توصيل فقط" : "شراء + توصيل"}\nمن: ${from}\nإلى: ${to}\nالتفاصيل: ${details}`;
+
+      document.getElementById("orderType").value = "delivery";
+      document.getElementById("from").value = "";
+      document.getElementById("to").value = "";
+      document.getElementById("details").value = "";
+    });
+  });
+</script>
+
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBmhhkD54zyVv-N2N_nZD2lZBsT9umIOnk&callback=initMap" async defer></script>
+
+</body>
+</html>
